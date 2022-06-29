@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/sirupsen/logrus"
 )
 
@@ -31,16 +32,20 @@ type Server struct {
 	SecureToken      string
 	EnableCORS       bool
 	ProtectedMethods []string
+	KafkaTopic       *string
+	KafkaBrokers     string
 }
 
 // NewServer creates a new simple-upload server.
-func NewServer(documentRoot string, maxUploadSize int64, token string, enableCORS bool, protectedMethods []string) Server {
+func NewServer(documentRoot string, maxUploadSize int64, token string, enableCORS bool, protectedMethods []string, topic *string, brokers string) Server {
 	return Server{
 		DocumentRoot:     documentRoot,
 		MaxUploadSize:    maxUploadSize,
 		SecureToken:      token,
 		EnableCORS:       enableCORS,
 		ProtectedMethods: protectedMethods,
+		KafkaTopic:       topic,
+		KafkaBrokers:     brokers,
 	}
 }
 
@@ -126,6 +131,38 @@ func (s Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	}).Info("file uploaded by POST")
 	if s.EnableCORS {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+	}
+	if s.KafkaBrokers != "" {
+		logger.WithFields(logrus.Fields{
+			"brokers": s.KafkaBrokers,
+			"topic":   s.KafkaTopic}).Info("file sent to kafka")
+		// send payload to kafka
+		p, err := kafka.NewProducer(&kafka.ConfigMap{
+			"bootstrap.servers":    s.KafkaBrokers,
+			"client.id":            "simple-upload-server",
+			"default.topic.config": kafka.ConfigMap{"acks": "all"},
+		})
+		if err != nil {
+			fmt.Printf("Failed to create producer: %s\n", err)
+			os.Exit(1)
+		}
+		delivery_chan := make(chan kafka.Event, 10000)
+		err = p.Produce(&kafka.Message{
+			TopicPartition: kafka.TopicPartition{Topic: s.KafkaTopic, Partition: kafka.PartitionAny},
+			Value:          body},
+			delivery_chan,
+		)
+		e := <-delivery_chan
+		m := e.(*kafka.Message)
+
+		if m.TopicPartition.Error != nil {
+			fmt.Printf("Delivery failed: %v\n", m.TopicPartition.Error)
+		} else {
+			fmt.Printf("Delivered message to topic %s [%d] at offset %v\n",
+				*m.TopicPartition.Topic, m.TopicPartition.Partition, m.TopicPartition.Offset)
+		}
+
+		close(delivery_chan)
 	}
 	w.WriteHeader(http.StatusOK)
 	writeSuccess(w, uploadedURL)

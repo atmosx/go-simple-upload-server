@@ -15,7 +15,9 @@ import (
 var logger *logrus.Logger
 
 func run(args []string) int {
-	bindAddress := flag.String("ip", "0.0.0.0", "IP address to bind")
+	kafkaBrokers := flag.String("brokers", "", "Apache Kafka brokers addresses")
+	kafkaTopic := flag.String("topic", "", "Apache Kafka topic to write incoming payload")
+	bindAddress := flag.String("ip", "", "IP address to bind")
 	listenPort := flag.Int("port", 25478, "port number to listen on")
 	tlsListenPort := flag.Int("tlsport", 25443, "port number to listen on with TLS")
 	// 5,242,880 bytes == 5 MiB
@@ -36,6 +38,14 @@ func run(args []string) int {
 		logrus.WithError(err).Error("failed to parse logging level, so set to default")
 	} else {
 		logger.Level = logLevel
+	}
+	kb := *kafkaBrokers
+	if kb != "" {
+		logger.WithField("kafka brokers", kb).Info("kafka brokers found")
+	}
+	kt := *kafkaTopic
+	if kt != "" {
+		logger.WithField("kafka topic", kt).Info("kafka topic set")
 	}
 	token := *tokenFlag
 	if token == "" {
@@ -63,7 +73,7 @@ func run(args []string) int {
 		}
 	}
 	tlsEnabled := *certFile != "" && *keyFile != ""
-	server := NewServer(serverRoot, *maxUploadSize, token, *corsEnabled, protectedMethods)
+	server := NewServer(serverRoot, *maxUploadSize, token, *corsEnabled, protectedMethods, kafkaTopic, *kafkaBrokers)
 	http.Handle("/upload", server)
 	http.Handle("/files/", server)
 
@@ -78,6 +88,8 @@ func run(args []string) int {
 			"upload_limit":     *maxUploadSize,
 			"root":             serverRoot,
 			"cors":             *corsEnabled,
+			"kafkaBrokers":     *kafkaBrokers,
+			"kafkaTopic":       *kafkaTopic,
 		}).Info("start listening")
 
 		if err := http.ListenAndServe(fmt.Sprintf("%s:%d", *bindAddress, *listenPort), nil); err != nil {
