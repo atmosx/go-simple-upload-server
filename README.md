@@ -214,3 +214,7 @@ services:
     networks:
       - proxy
 ```
+
+## Kafka support
+
+Add `brokers` and `topic` options and the app will send the payload to the kafka cluster.
